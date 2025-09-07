@@ -3,73 +3,71 @@ import requests
 import pandas as pd
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="Индикатор ликвидаций", layout="wide")
+# 🔑 Твой API ключ
+API_KEY = "54cdc166-45ae-42fd-bdbb-eff6ad8f3731"
+BASE_URL = "https://coinalyze.net/api/v1/liquidations"
 
+# ========================
+# Функция для запроса API
+# ========================
+def get_liquidations(symbol: str):
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    params = {"symbol": symbol, "interval": "1h"}  # пример: 1h свечи
+    response = requests.get(BASE_URL, headers=headers, params=params)
+
+    if response.status_code != 200:
+        return None, f"Ошибка {response.status_code}: {response.text}"
+
+    try:
+        data = response.json()
+        return data, None
+    except Exception as e:
+        return None, str(e)
+
+# ========================
+# Streamlit UI
+# ========================
+st.set_page_config(page_title="Индикатор ликвидаций Coinalyze", layout="wide")
 st.title("📊 Индикатор ликвидаций Coinalyze")
 
-# --- Выбор торгового символа
+# Символ
 symbol = st.selectbox("Выберите символ", ["BTCUSDT", "ETHUSDT", "BNBUSDT"])
 
-# --- Функция запроса данных с API Coinalyze (замени URL на реальный!)
-def get_liquidation_data(symbol: str):
-    url = f"https://api.coinalyze.net/liquidations?symbol={symbol}"
+# Получаем данные
+data, error = get_liquidations(symbol)
+
+# Отладка
+st.write("DEBUG: API ответ")
+st.json(data if data else {})
+
+if error:
+    st.error(f"Ошибка получения данных: {error}")
+elif not data:
+    st.warning("Нет данных от API.")
+else:
     try:
-        response = requests.get(url)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return {}
+        # Предполагаем, что API возвращает список объектов с полями:
+        # timestamp, long_liquidations, short_liquidations
+        df = pd.DataFrame(data)
+
+        # Приводим время
+        if "timestamp" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
+
+        # Строим график
+        fig = go.Figure()
+        if "long_liquidations" in df.columns:
+            fig.add_trace(go.Bar(x=df["timestamp"], y=df["long_liquidations"], name="Longs", marker_color="green"))
+        if "short_liquidations" in df.columns:
+            fig.add_trace(go.Bar(x=df["timestamp"], y=df["short_liquidations"], name="Shorts", marker_color="red"))
+
+        fig.update_layout(
+            title=f"Ликвидации {symbol}",
+            xaxis_title="Время",
+            yaxis_title="USD",
+            barmode="stack"
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
     except Exception as e:
-        return {"error": str(e)}
-
-# --- Загружаем данные
-data = get_liquidation_data(symbol)
-
-# --- Отладочный вывод (видно прямо в Streamlit)
-st.write("DEBUG: API ответ", data)
-
-# --- Преобразуем в DataFrame
-if not data or "error" in data:
-    st.error("❌ Ошибка получения данных. Проверь API.")
-    st.stop()
-
-# Если ответ — словарь, делаем список
-if isinstance(data, dict):
-    data = [data]
-
-try:
-    df = pd.DataFrame(data)
-except Exception as e:
-    st.error(f"Ошибка преобразования данных: {e}")
-    st.stop()
-
-# Проверим что в DataFrame есть данные
-if df.empty:
-    st.warning("⚠️ Данных нет для выбранного символа")
-    st.stop()
-
-# --- Построение графика ликвидаций
-fig = go.Figure()
-
-fig.add_trace(go.Bar(
-    x=df["timestamp"], 
-    y=df["long_liquidations"], 
-    name="Лонг ликвидации", 
-    marker_color="red"
-))
-
-fig.add_trace(go.Bar(
-    x=df["timestamp"], 
-    y=df["short_liquidations"], 
-    name="Шорт ликвидации", 
-    marker_color="green"
-))
-
-fig.update_layout(
-    title=f"Ликвидации {symbol}",
-    xaxis_title="Время",
-    yaxis_title="Объём ликвидаций",
-    barmode="group"
-)
-
-st.plotly_chart(fig, use_container_width=True)
+        st.error(f"Ошибка обработки данных: {e}")
