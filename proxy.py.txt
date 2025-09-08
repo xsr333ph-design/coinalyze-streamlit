@@ -1,0 +1,36 @@
+from flask import Flask, request, jsonify
+import requests
+import os
+import time
+
+app = Flask(__name__)
+
+API_KEY = os.getenv("COINALYZE_API_KEY", "твоя_API_строка")
+BASE_URL = "https://api.coinalyze.net/v1"
+
+@app.route("/fetch", methods=["GET"])
+def fetch():
+    symbol = request.args.get("symbol", "BTCUSDT_PERP.A")
+    interval = request.args.get("interval", "1hour")
+
+    # Даты: последние сутки
+    to_ts = int(time.time())
+    from_ts = to_ts - 86400
+
+    url = f"{BASE_URL}/liquidation-history"
+    headers = {"x-api-key": API_KEY}
+    params = {
+        "symbol": symbol,
+        "interval": interval,
+        "from": from_ts,
+        "to": to_ts
+    }
+
+    r = requests.get(url, headers=headers, params=params)
+    try:
+        return jsonify(r.json())
+    except Exception:
+        return jsonify({"error": "bad response", "text": r.text}), r.status_code
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)

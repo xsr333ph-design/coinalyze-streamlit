@@ -1,88 +1,40 @@
 import streamlit as st
 import requests
-import time
-import pandas as pd
-import altair as alt
-import os
 
-# Получаем API ключ из секрета Streamlit
-API_KEY = os.getenv("COINALYZE_API_KEY")
+# Адрес твоего прокси на Render
+PROXY_URL = "https://coinalyze-proxy.onrender.com"
 
-# Список символов (можно расширить)
-symbols = ["BTCUSDT_PERP.A", "ETHUSDT_PERP.A"]
-
-# Доступные таймфреймы (только часовые и дневные, без минутных)
-timeframes = ["1hour", "2hour", "4hour", "6hour", "12hour", "daily"]
-
-st.title("🔧 Coinalyze Aggregated Liquidation / OI / Ratio Indicator")
-
-# Выбор символа и таймфрейма
-symbol = st.selectbox("Choose symbol", symbols)
-interval = st.selectbox("Timeframe", timeframes)
-
-# Время: сейчас и 7 дней назад
-now = int(time.time())
-seven_days_ago = now - 7 * 24 * 60 * 60
-
-def fetch_data(endpoint, symbol, interval):
-    """Запрос к Coinalyze API"""
-    url = f"https://fapi.coinalyze.net/v1/{endpoint}"
-    params = {
-        "instrument": symbol,
-        "interval": interval,
-        "from": seven_days_ago,
-        "to": now
-    }
-    headers = {"x-api-key": API_KEY}
-
-    response = requests.get(url, headers=headers, params=params)
-    if response.status_code == 200:
+# Функция для получения данных через прокси
+def fetch_data(endpoint: str, params: dict = None):
+    url = f"{PROXY_URL}/{endpoint}"
+    try:
+        response = requests.get(url, params=params)
+        response.raise_for_status()
         return response.json()
-    else:
-        st.error(f"Error {response.status_code} at {endpoint}: {response.text}")
-        return None
+    except Exception as e:
+        return {"error": str(e)}
 
-st.write("Fetching aggregated data (liquidations, OI, ratio)...")
+# Интерфейс Streamlit
+st.set_page_config(page_title="Coinalyze Dashboard", layout="wide")
 
-# Загружаем данные
-liquidations = fetch_data("liquidation-history", symbol, interval)
-open_interest = fetch_data("open-interest-history", symbol, interval)
-long_short = fetch_data("long-short-ratio-history", symbol, interval)
+st.title("📊 Coinalyze Data via Proxy")
 
-# Визуализация
-if liquidations and open_interest and long_short:
-    # Ликвидации
-    df_liq = pd.DataFrame(liquidations)
-    df_liq["time"] = pd.to_datetime(df_liq["time"], unit="s")
+# Пример 1: Список рынков
+st.subheader("Список рынков")
+markets = fetch_data("v1/markets")
+st.json(markets)
 
-    chart_liq = (
-        alt.Chart(df_liq)
-        .mark_line()
-        .encode(x="time:T", y="sum:Q")
-        .properties(title="Aggregated Liquidations")
-    )
-    st.altair_chart(chart_liq, use_container_width=True)
+# Пример 2: Ликвидации (с параметрами)
+st.subheader("Ликвидации")
+symbol = st.text_input("Введите символ (например, BTCUSDT):", "BTCUSDT")
+interval = st.selectbox("Интервал:", ["1h", "4h", "1d"], index=0)
 
-    # OI
-    df_oi = pd.DataFrame(open_interest)
-    df_oi["time"] = pd.to_datetime(df_oi["time"], unit="s")
+if st.button("Получить ликвидации"):
+    liquidations = fetch_data("v1/liquidations", {"symbol": symbol, "interval": interval})
+    st.json(liquidations)
 
-    chart_oi = (
-        alt.Chart(df_oi)
-        .mark_line(color="orange")
-        .encode(x="time:T", y="value:Q")
-        .properties(title="Open Interest")
-    )
-    st.altair_chart(chart_oi, use_container_width=True)
-
-    # Long/Short ratio
-    df_ratio = pd.DataFrame(long_short)
-    df_ratio["time"] = pd.to_datetime(df_ratio["time"], unit="s")
-
-    chart_ratio = (
-        alt.Chart(df_ratio)
-        .mark_line(color="green")
-        .encode(x="time:T", y="value:Q")
-        .properties(title="Long/Short Ratio")
-    )
-    st.altair_chart(chart_ratio, use_container_width=True)
+# Пример 3: Открытый интерес
+st.subheader("Открытый интерес")
+if st.button("Получить Open Interest"):
+    oi = fetch_data("v1/open-interest", {"symbol": symbol, "interval": interval})
+    st.json(oi)
