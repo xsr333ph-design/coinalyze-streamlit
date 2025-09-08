@@ -1,52 +1,88 @@
-import os
 import streamlit as st
-import pandas as pd
-import plotly.express as px
 import requests
+import time
+import pandas as pd
+import altair as alt
+import os
 
-st.set_page_config(page_title="Coinalyze Aggregated Indicator", layout="wide")
-st.title("🛠 Coinalyze Aggregated Liquidation / OI / Ratio Indicator")
+# Получаем API ключ из секрета Streamlit
+API_KEY = os.getenv("COINALYZE_API_KEY")
 
-API_KEY = os.getenv("COINALYZE_API_KEY", "")
-if not API_KEY:
-    st.error("API key missing! Set COINALYZE_API_KEY env var or configure in secrets.")
-    st.stop()
+# Список символов (можно расширить)
+symbols = ["BTCUSDT_PERP.A", "ETHUSDT_PERP.A"]
 
-HEADERS = {"api_key": API_KEY}
-BASE_URL = "https://api.coinalyze.net/v1"
+# Доступные таймфреймы (только часовые и дневные, без минутных)
+timeframes = ["1hour", "2hour", "4hour", "6hour", "12hour", "daily"]
 
-symbol = st.selectbox("Choose symbol", ["BTCUSDT_PERP.A", "ETHUSDT_PERP.A"])
-tf = st.selectbox("Timeframe", ["5m","1h","1d"])
+st.title("🔧 Coinalyze Aggregated Liquidation / OI / Ratio Indicator")
 
-# --- Helper to fetch historical series ---
-def fetch_history(endpoint: str, series_name: str):
-    url = f"{BASE_URL}/{endpoint}"
-    params = {"symbols": symbol, "interval": tf}
-    resp = requests.get(url, headers=HEADERS, params=params, timeout=15)
-    if resp.status_code != 200:
-        st.error(f"Error {resp.status_code} at {endpoint}: {resp.text}")
-        st.stop()
-    data = resp.json()
-    df = pd.DataFrame(data)
-    df["timestamp"] = pd.to_datetime(df["update"], unit="ms")
-    df = df.set_index("timestamp").sort_index()
-    return df
+# Выбор символа и таймфрейма
+symbol = st.selectbox("Choose symbol", symbols)
+interval = st.selectbox("Timeframe", timeframes)
 
-st.subheader("Fetching aggregated data (liquidations, OI, ratio)...")
-liqs = fetch_history("liquidation-history", "liq")
-oi = fetch_history("open-interest-history", "oi")
-lsr = fetch_history("long-short-ratio-history", "lsr")
+# Время: сейчас и 7 дней назад
+now = int(time.time())
+seven_days_ago = now - 7 * 24 * 60 * 60
 
-# Merge into single DataFrame
-df = pd.concat([liqs["value"].rename("liquidations"),
-                oi["value"].rename("open_interest"),
-                lsr["value"].rename("long_short_ratio")], axis=1).dropna()
+def fetch_data(endpoint, symbol, interval):
+    """Запрос к Coinalyze API"""
+    url = f"https://fapi.coinalyze.net/v1/{endpoint}"
+    params = {
+        "instrument": symbol,
+        "interval": interval,
+        "from": seven_days_ago,
+        "to": now
+    }
+    headers = {"x-api-key": API_KEY}
 
-st.subheader(f"Latest data for `{symbol}` ({tf} timeframe):")
-st.dataframe(df.tail(10))
+    response = requests.get(url, headers=headers, params=params)
+    if response.status_code == 200:
+        return response.json()
+    else:
+        st.error(f"Error {response.status_code} at {endpoint}: {response.text}")
+        return None
 
-st.subheader("Charts")
+st.write("Fetching aggregated data (liquidations, OI, ratio)...")
 
-fig = px.line(df, y=["liquidations","open_interest","long_short_ratio"])
-fig.update_layout(xaxis_title="Time", yaxis_title="Value", legend_title="Series")
-st.plotly_chart(fig, use_container_width=True)
+# Загружаем данные
+liquidations = fetch_data("liquidation-history", symbol, interval)
+open_interest = fetch_data("open-interest-history", symbol, interval)
+long_short = fetch_data("long-short-ratio-history", symbol, interval)
+
+# Визуализация
+if liquidations and open_interest and long_short:
+    # Ликвидации
+    df_liq = pd.DataFrame(liquidations)
+    df_liq["time"] = pd.to_datetime(df_liq["time"], unit="s")
+
+    chart_liq = (
+        alt.Chart(df_liq)
+        .mark_line()
+        .encode(x="time:T", y="sum:Q")
+        .properties(title="Aggregated Liquidations")
+    )
+    st.altair_chart(chart_liq, use_container_width=True)
+
+    # OI
+    df_oi = pd.DataFrame(open_interest)
+    df_oi["time"] = pd.to_datetime(df_oi["time"], unit="s")
+
+    chart_oi = (
+        alt.Chart(df_oi)
+        .mark_line(color="orange")
+        .encode(x="time:T", y="value:Q")
+        .properties(title="Open Interest")
+    )
+    st.altair_chart(chart_oi, use_container_width=True)
+
+    # Long/Short ratio
+    df_ratio = pd.DataFrame(long_short)
+    df_ratio["time"] = pd.to_datetime(df_ratio["time"], unit="s")
+
+    chart_ratio = (
+        alt.Chart(df_ratio)
+        .mark_line(color="green")
+        .encode(x="time:T", y="value:Q")
+        .properties(title="Long/Short Ratio")
+    )
+    st.altair_chart(chart_ratio, use_container_width=True)
